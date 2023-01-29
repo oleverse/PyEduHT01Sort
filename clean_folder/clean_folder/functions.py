@@ -6,7 +6,7 @@ import bz2
 import gzip
 import lzma
 
-import constants as CONST
+from clean_folder import constants as CONST
 
 
 # add ability to unpack 7z archives
