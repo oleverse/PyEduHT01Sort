@@ -15,8 +15,8 @@ shutil.register_unpack_format("7zip", [".7z"], unpack_7zarchive)
 
 def transliterate(origin: str) -> str:
     """
-  - transliterates cyrillic characters
-  """
+    - transliterates cyrillic characters
+    """
     result = origin
 
     pattern = re.compile(r"[а-яА-Я]")
@@ -29,9 +29,9 @@ def transliterate(origin: str) -> str:
 
 def normalize(not_normal_string: str) -> str:
     """
-  - replaces all characters which are not latin letters with "_" (underscore)
-  - does not change the case
-  """
+    - replaces all characters which are not latin letters with "_" (underscore)
+    - does not change the case
+    """
     pattern = re.compile(r"[^\w.]")
     result = re.sub(pattern, '_', not_normal_string)
 
@@ -42,8 +42,8 @@ def normalize(not_normal_string: str) -> str:
 
 def stream_unpack(extension, src_path, dst_path):
     """
-  - unpacks GZ, BZ2 and TX archives
-  """
+    - unpacks GZ, BZ2 and XZ archives
+    """
     if not extension:
         raise ValueError
 
@@ -73,8 +73,8 @@ def stream_unpack(extension, src_path, dst_path):
 
 def unpack(real_archive_path: str, normalized_archive_path: str) -> Tuple[bool, Any]:
     """
-  - unpacks an archive and deletes it after the job is done
-  """
+    - unpacks an archive and deletes it after the job is done
+    """
     # extract the name and extension parts from the normalized path
     stream_archives_list = (".GZ", ".BZ2", ".XZ")
 
@@ -119,9 +119,9 @@ def unpack(real_archive_path: str, normalized_archive_path: str) -> Tuple[bool, 
 
 def get_file_group(file_name: str) -> str:
     """
-  - categorizes the file by extension
-  - returns group name
-  """
+    - categorizes the file by extension
+    - returns group name
+    """
     group_name = const.FS_DEFAULT_GROUP
 
     if file_name:
@@ -135,8 +135,8 @@ def get_file_group(file_name: str) -> str:
 
 def merge_results(primary: dict, secondary: dict) -> dict:
     """
-  - unites two dictionaries
-  """
+    - unites two dictionaries
+    """
     if primary:
         result = primary
     else:
@@ -161,8 +161,8 @@ def merge_results(primary: dict, secondary: dict) -> dict:
 
 def add_fs_object_to_group(groups_dict: dict, group_name: str, list_item: dict) -> dict:
     """
-  - adds a filesystem object to a group (groups will become directories eventually)
-  """
+    - adds a filesystem object to a group (groups will become directories eventually)
+    """
     result = groups_dict
 
     # initialize the group list
@@ -176,11 +176,11 @@ def add_fs_object_to_group(groups_dict: dict, group_name: str, list_item: dict) 
 
 def move_file_to_group_dir(group_name: str, current_path: str, new_path: str) -> tuple:
     """
-  - moves a file to a directory which has a group name
-  - instead of moving an archive function unpacks it and the unpacked content
-  will be placed to a directory with the name of the archive without an
-  extension and this directory in order will be placed in a group directory
-  """
+    - moves a file to a directory which has a group name
+    - instead of moving an archive function unpacks it and the unpacked content
+    will be placed to a directory with the name of the archive without an
+    extension and this directory in order will be placed in a group directory
+    """
     if not group_name or not current_path or not new_path:
         return False, const.ERROR_EMPTY_VALUE
 
@@ -207,8 +207,8 @@ def move_file_to_group_dir(group_name: str, current_path: str, new_path: str) ->
 
 def remove_empty_directories(directory: str, recursion_depth=0) -> int:
     """
-  - removes empty directories recursively
-  """
+    - removes empty directories recursively
+    """
     if not directory:
         return False
 
@@ -238,9 +238,9 @@ def remove_empty_directories(directory: str, recursion_depth=0) -> int:
 
 def get_file_list(directory: str, root_directory="", recursion_depth=0) -> dict:
     """
-  - recursive function which scans the given directory and forms the list of
-  grouped files
-  - returns a dictionary with such structure:
+    - recursive function which scans the given directory and forms the list of
+    grouped files
+    - returns a dictionary with such structure:
     {
       "<GROUP_NAME>": [
         {
@@ -250,9 +250,9 @@ def get_file_list(directory: str, root_directory="", recursion_depth=0) -> dict:
         ...
       ]
     }
-  - instead of resulting path "new_path" key can contain an error description
-  (for example if we're trying to replace an existing file or directory)
-  """
+    - instead of resulting path "new_path" key can contain an error description
+    (for example if we're trying to replace an existing file or directory)
+    """
     result = {}
 
     if directory:
