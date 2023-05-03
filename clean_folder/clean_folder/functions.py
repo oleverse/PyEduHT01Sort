@@ -19,7 +19,7 @@ def transliterate(origin: str) -> str:
     """
     result = origin
 
-    pattern = re.compile(r"[а-яА-Я]")
+    pattern = re.compile(r"[а-яА-ЯёЁ]")
 
     if re.match(pattern, origin):
         result = origin.translate(const.TRANSLIT_TABLE)
@@ -242,13 +242,13 @@ def get_file_list(directory: str, root_directory="", recursion_depth=0) -> dict:
     grouped files
     - returns a dictionary with such structure:
     {
-      "<GROUP_NAME>": [
-        {
-        "path": "<CURRENT_PATH_TO_THE_FILE>",
-        "new_path": "<NEW_PATH_WITH_NORMALIZED_NAME>"
-        },
-        ...
-      ]
+        "<GROUP_NAME>": [
+            {
+            "path": "<CURRENT_PATH_TO_THE_FILE>",
+            "new_path": "<NEW_PATH_WITH_NORMALIZED_NAME>"
+            },
+            ...
+        ]
     }
     - instead of resulting path "new_path" key can contain an error description
     (for example if we're trying to replace an existing file or directory)
