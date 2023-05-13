@@ -205,7 +205,7 @@ def move_file_to_group_dir(group_name: str, current_path: str, new_path: str) ->
     return True, None
 
 
-def remove_empty_directories(directory: str, recursion_depth=0) -> int:
+def remove_empty_dirs(directory: str) -> int:
     """
     - removes empty directories recursively
     """
@@ -220,23 +220,89 @@ def remove_empty_directories(directory: str, recursion_depth=0) -> int:
                 objects_count += 1
 
                 if fs_object.is_dir(follow_symlinks=False):
-                    deeper_result = remove_empty_directories(fs_object.path, recursion_depth + 1)
+                    deeper_result = remove_empty_dirs(fs_object.path)
 
                     if not deeper_result:
-                        # we are not up to removing the origin directory if it's empty
-                        if recursion_depth > 0:
-                            # current directory is empty, so we should remove it right here
-                            # after removing the parent directory may become empty as well and thus will also be removed
-                            try:
-                                os.rmdir(fs_object.path)
-                                objects_count -= 1
-                            except Exception as ex:
-                                print(ex)
+                        # current directory is empty, so we should remove it right here
+                        # after removing the parent directory may become empty as well and thus will also be removed
+                        try:
+                            os.rmdir(fs_object.path)
+                            print(f'"{fs_object.path}" removed')
+                            objects_count -= 1
+                        except Exception as ex:
+                            print(ex)
 
     return objects_count
 
 
-def get_file_list(directory: str, root_directory="", recursion_depth=0) -> dict:
+def process_directory(params: tuple):
+    fs_object, root_directory, recursion_depth, result = params
+
+    deeper_result = do_arrange(fs_object.path, root_directory, recursion_depth + 1)
+
+    if deeper_result:
+        result = merge_results(result, deeper_result)
+
+    dir_normalized_name = normalize(fs_object.name)
+
+    if dir_normalized_name != fs_object.name:
+        list_item = {"path": fs_object.path}
+        new_path = os.path.join(os.path.split(fs_object.path)[0], dir_normalized_name)
+        list_item["new_path"] = new_path
+
+        if os.path.exists(new_path):
+            list_item["new_path"] = const.FS_ERROR_DIR_EXISTS
+        else:
+            # try to rename the directory
+            try:
+                os.rename(fs_object.path, new_path)
+            except Exception as ex:
+                print(f"Failed to rename file {fs_object.name}")
+                print(ex)
+                list_item["new_path"] = const.FS_ERROR_RENAMING
+
+        result = add_fs_object_to_group(result, const.FS_DIRECTORY_GROUP, list_item)
+
+    return result
+
+
+def process_file(params: tuple):
+    fs_object, root_directory, recursion_depth, result = params
+
+    normalized_name = normalize(fs_object.name)
+    file_group_name = get_file_group(fs_object.name)
+
+    list_item = {"path": fs_object.path}
+    # leave unknown files intact
+    if file_group_name != const.FS_DEFAULT_GROUP:
+        new_path = os.path.join(os.path.abspath(root_directory), file_group_name, normalized_name)
+        # move the file to a group directory
+        move_result, move_error = move_file_to_group_dir(file_group_name, fs_object.path, new_path)
+        list_item["new_path"] = new_path if move_result else move_error
+    result = add_fs_object_to_group(result, file_group_name, list_item)
+
+    return result
+
+
+def process_fs_object(params: tuple):
+    fs_object, root_directory, recursion_depth, result = params
+
+    if fs_object.is_file(follow_symlinks=False):
+        result = process_file(params)
+    elif fs_object.is_dir(follow_symlinks=False):
+        # ignore group directories (FS_GROUPS contains their names) if it's not a recursion call
+        if recursion_depth == 0 and fs_object.name in const.FS_GROUPS.values():
+            return const.SKIP_GROUP_FOLDER
+
+        result = process_directory(params)
+    elif fs_object.is_symlink():
+        # keep symlinks listed because they are the cause why the directory may not be empty
+        result = add_fs_object_to_group(result, const.FS_SYMLINK_GROUP, {"path": fs_object.path})
+
+    return result
+
+
+def do_arrange(directory: str, root_directory="", recursion_depth=0) -> dict:
     """
     - recursive function which scans the given directory and forms the list of
     grouped files
@@ -269,51 +335,7 @@ def get_file_list(directory: str, root_directory="", recursion_depth=0) -> dict:
         if os.path.isdir(directory):
             with os.scandir(directory) as dir_iterator:
                 for fs_object in dir_iterator:
-                    if fs_object.is_file(follow_symlinks=False):
-                        normalized_name = normalize(fs_object.name)
-                        file_group_name = get_file_group(fs_object.name)
-
-                        list_item = {"path": fs_object.path}
-                        # leave unknown files intact
-                        if file_group_name != const.FS_DEFAULT_GROUP:
-                            new_path = os.path.join(os.path.abspath(root_directory), file_group_name, normalized_name)
-                            # move the file to a group directory
-                            move_result, move_error = move_file_to_group_dir(file_group_name, fs_object.path, new_path)
-                            list_item["new_path"] = new_path if move_result else move_error
-                        result = add_fs_object_to_group(result, file_group_name, list_item)
-                    elif fs_object.is_dir(follow_symlinks=False):
-                        # ignore group directories (FS_GROUPS contains their names) if it's not a recursion call
-                        if recursion_depth == 0 and fs_object.name in const.FS_GROUPS.values():
-                            continue
-
-                        deeper_result = get_file_list(fs_object.path, root_directory, recursion_depth + 1)
-
-                        if deeper_result:
-                            result = merge_results(result, deeper_result)
-                            dir_normalized_name = normalize(fs_object.name)
-
-                            if dir_normalized_name != fs_object.name:
-                                list_item = {"path": fs_object.path}
-                                new_path = os.path.join(os.path.split(fs_object.path)[0], dir_normalized_name)
-                                list_item["new_path"] = new_path
-
-                                if os.path.exists(new_path):
-                                    list_item["new_path"] = const.FS_ERROR_DIR_EXISTS
-                                else:
-                                    # try to rename the directory
-                                    try:
-                                        os.rename(fs_object.path, new_path)
-                                    except Exception as ex:
-                                        print(f"Failed to rename file {fs_object.name}")
-                                        print(ex)
-                                        list_item["new_path"] = const.FS_ERROR_RENAMING
-
-                                result = add_fs_object_to_group(result, const.FS_DIRECTORY_GROUP, list_item)
-                    elif fs_object.is_symlink():
-                        # keep symlinks listed because they are the cause why the directory may not be empty
-                        result = add_fs_object_to_group(result, const.FS_SYMLINK_GROUP, {"path": fs_object.path})
-
-        if recursion_depth == 0:
-            remove_empty_directories(root_directory)
-
+                    params = fs_object, root_directory, recursion_depth, result
+                    if (fs_result := process_fs_object(params)) != const.SKIP_GROUP_FOLDER:
+                        result = fs_result
     return result

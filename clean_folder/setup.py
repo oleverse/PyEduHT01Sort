@@ -12,5 +12,5 @@ setup(name="clean_folder",
       install_requires=[
             "py7zr"
       ],
-      entry_points={"console_scripts": ["clean-folder = clean_folder.sort:do_cleaning"]}
+      entry_points={"console_scripts": ["clean-folder = clean_folder.sort:arrange_dir"]}
       )
