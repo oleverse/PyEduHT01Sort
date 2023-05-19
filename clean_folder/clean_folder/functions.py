@@ -1,3 +1,4 @@
+import threading
 from typing import Tuple, Any
 import os
 import re
@@ -6,11 +7,14 @@ from py7zr import unpack_7zarchive
 import bz2
 import gzip
 import lzma
+from multiprocessing import Pool
 
 from clean_folder import constants as const
 
 # add ability to unpack 7z archives
 shutil.register_unpack_format("7zip", [".7z"], unpack_7zarchive)
+
+threads = list()
 
 
 def transliterate(origin: str) -> str:
@@ -76,6 +80,8 @@ def unpack(real_archive_path: str, normalized_archive_path: str) -> Tuple[bool, 
     - unpacks an archive and deletes it after the job is done
     """
     # extract the name and extension parts from the normalized path
+    print(f"Unpack-Thread-{threading.current_thread()}")
+
     stream_archives_list = (".GZ", ".BZ2", ".XZ")
 
     if (ext_index := normalized_archive_path.rfind('.')) != -1:
@@ -88,17 +94,18 @@ def unpack(real_archive_path: str, normalized_archive_path: str) -> Tuple[bool, 
 
         destination_dir_name = normalized_archive_path[:ext_index]
         if os.path.exists(destination_dir_name):
+            print(f"Unarchiving filed with error: {const.FS_ERROR_DIR_EXISTS}")
             return False, const.FS_ERROR_DIR_EXISTS
 
         try:
             # create the directory
             group_dir_name = os.path.dirname(destination_dir_name)
             if not os.path.exists(group_dir_name):
-                os.mkdir(group_dir_name)
+                os.makedirs(group_dir_name, exist_ok=True)
 
             # unpack the archive
             if not os.path.exists(destination_dir_name):
-                os.mkdir(destination_dir_name)
+                os.makedirs(destination_dir_name, exist_ok=True)
 
             if extension in stream_archives_list:
                 _, dst_tail = os.path.split(destination_dir_name)
@@ -109,11 +116,13 @@ def unpack(real_archive_path: str, normalized_archive_path: str) -> Tuple[bool, 
             # remove the origin
             os.remove(real_archive_path)
         except Exception as ex:
-            print(ex)
+            print(f"Unarchiving filed with exception: {ex}")
             return False, const.FS_ERROR_RENAMING
     else:
+        print(f"Unarchiving filed with error: {const.ERROR_ARCHIVE_WITHOUT_EXTENSION}")
         return False, const.ERROR_ARCHIVE_WITHOUT_EXTENSION
 
+    print("Unarchiving successfully done!")
     return True, None
 
 
@@ -143,7 +152,7 @@ def merge_results(primary: dict, secondary: dict) -> dict:
         # don't use precious CPU time if there's only one dict
         return secondary
 
-    if secondary:
+    if secondary and primary != secondary:
         for key, val in secondary.items():
             try:
                 # init the dict key
@@ -188,13 +197,17 @@ def move_file_to_group_dir(group_name: str, current_path: str, new_path: str) ->
         return False, const.FS_ERROR_FILE_EXISTS
 
     if group_name == const.FS_GROUPS["ARCH"]:
-        return unpack(current_path, new_path)
+        # HERE we delegate "dirty archive work" to a thread
+        thr = threading.Thread(target=unpack, args=(current_path, new_path))
+        threads.append(thr)
+        thr.start()
+        # return unpack(current_path, new_path)
     else:
         try:
             # create the directory
             dir_name = os.path.dirname(new_path)
             if not os.path.exists(dir_name):
-                os.mkdir(dir_name)
+                os.makedirs(dir_name, exist_ok=True)
 
             # move the file
             os.rename(current_path, new_path)
@@ -236,18 +249,21 @@ def remove_empty_dirs(directory: str) -> int:
 
 
 def process_directory(params: tuple):
-    fs_object, root_directory, recursion_depth, result = params
+    fs_object_path, root_directory, recursion_depth, result = params
 
-    deeper_result = do_arrange(fs_object.path, root_directory, recursion_depth + 1)
+    with os.scandir(fs_object_path) as dir_scan:
+        for dir_entry in dir_scan:
+            deeper_result = process_fs_entry((dir_entry.path, root_directory, recursion_depth + 1, result))
 
-    if deeper_result:
-        result = merge_results(result, deeper_result)
+            if deeper_result:
+                result = merge_results(result, deeper_result)
 
-    dir_normalized_name = normalize(fs_object.name)
+    base_name = os.path.basename(fs_object_path)
+    dir_normalized_name = normalize(base_name)
 
-    if dir_normalized_name != fs_object.name:
-        list_item = {"path": fs_object.path}
-        new_path = os.path.join(os.path.split(fs_object.path)[0], dir_normalized_name)
+    if dir_normalized_name != base_name:
+        list_item = {"path": fs_object_path}
+        new_path = os.path.join(os.path.split(fs_object_path)[0], dir_normalized_name)
         list_item["new_path"] = new_path
 
         if os.path.exists(new_path):
@@ -255,9 +271,9 @@ def process_directory(params: tuple):
         else:
             # try to rename the directory
             try:
-                os.rename(fs_object.path, new_path)
+                os.rename(fs_object_path, new_path)
             except Exception as ex:
-                print(f"Failed to rename file {fs_object.name}")
+                print(f"Failed to rename file {base_name}")
                 print(ex)
                 list_item["new_path"] = const.FS_ERROR_RENAMING
 
@@ -267,65 +283,55 @@ def process_directory(params: tuple):
 
 
 def process_file(params: tuple):
-    fs_object, root_directory, recursion_depth, result = params
+    fs_object_path, root_directory, recursion_depth, result = params
 
-    normalized_name = normalize(fs_object.name)
-    file_group_name = get_file_group(fs_object.name)
+    base_name = os.path.basename(fs_object_path)
+    normalized_name = normalize(base_name)
+    file_group_name = get_file_group(base_name)
 
-    list_item = {"path": fs_object.path}
+    list_item = {"path": fs_object_path}
     # leave unknown files intact
     if file_group_name != const.FS_DEFAULT_GROUP:
         new_path = os.path.join(os.path.abspath(root_directory), file_group_name, normalized_name)
         # move the file to a group directory
-        move_result, move_error = move_file_to_group_dir(file_group_name, fs_object.path, new_path)
+        move_result, move_error = move_file_to_group_dir(file_group_name, fs_object_path, new_path)
         list_item["new_path"] = new_path if move_result else move_error
     result = add_fs_object_to_group(result, file_group_name, list_item)
 
     return result
 
 
-def process_fs_object(params: tuple):
-    fs_object, root_directory, recursion_depth, result = params
+def process_fs_entry(params: tuple):
+    fs_object_path, root_directory, recursion_depth, result = params
 
-    if fs_object.is_file(follow_symlinks=False):
+    if result is None:
+        result = {}
+        params = fs_object_path, root_directory, recursion_depth, result
+
+    if os.path.islink(fs_object_path):
+        # keep symlinks listed because they are the cause why the directory may not be empty
+        result = add_fs_object_to_group(result, const.FS_SYMLINK_GROUP, {"path": fs_object_path.path})
+    elif os.path.isfile(fs_object_path):
         result = process_file(params)
-    elif fs_object.is_dir(follow_symlinks=False):
+    elif os.path.isdir(fs_object_path):
         # ignore group directories (FS_GROUPS contains their names) if it's not a recursion call
-        if recursion_depth == 0 and fs_object.name in const.FS_GROUPS.values():
+        if recursion_depth == 0 and os.path.basename(fs_object_path) in const.FS_GROUPS.values():
             return const.SKIP_GROUP_FOLDER
 
         result = process_directory(params)
-    elif fs_object.is_symlink():
-        # keep symlinks listed because they are the cause why the directory may not be empty
-        result = add_fs_object_to_group(result, const.FS_SYMLINK_GROUP, {"path": fs_object.path})
+
+    if recursion_depth == 0:
+        for thr in threads:
+            thr.join()
+            print(f"Thread-{thr} joined!")
 
     return result
 
 
-def do_arrange(directory: str, root_directory="", recursion_depth=0) -> dict:
-    """
-    - recursive function which scans the given directory and forms the list of
-    grouped files
-    - returns a dictionary with such structure:
-    {
-        "<GROUP_NAME>": [
-            {
-            "path": "<CURRENT_PATH_TO_THE_FILE>",
-            "new_path": "<NEW_PATH_WITH_NORMALIZED_NAME>"
-            },
-            ...
-        ]
-    }
-    - instead of resulting path "new_path" key can contain an error description
-    (for example if we're trying to replace an existing file or directory)
-    """
+def do_arrange(directory: str):
     result = {}
 
     if directory:
-        # keep the base directory for furture renamings
-        if not root_directory:
-            root_directory = directory
-
         if os.path.islink(directory):
             print("Symbolic links not supported.")
             print("To treat the symlink as a directory try to add a path "
@@ -333,9 +339,14 @@ def do_arrange(directory: str, root_directory="", recursion_depth=0) -> dict:
             return {}
 
         if os.path.isdir(directory):
-            with os.scandir(directory) as dir_iterator:
-                for fs_object in dir_iterator:
-                    params = fs_object, root_directory, recursion_depth, result
-                    if (fs_result := process_fs_object(params)) != const.SKIP_GROUP_FOLDER:
-                        result = fs_result
+            root_entries = [(x.path, directory, 0, None)
+                            for x in os.scandir(directory)]
+
+            pool = Pool()
+            results = pool.map(process_fs_entry, root_entries)
+
+            primary = {}
+            for r in results:
+                primary = result = merge_results(primary, r)
+
     return result
